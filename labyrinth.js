@@ -1,99 +1,78 @@
-// 3D Tilt Labyrinth Game
-class TiltLabyrinth {
+// 3D Mouse-Controlled Maze Game with Physics
+class MouseMaze {
     constructor() {
+        // Three.js objects
         this.scene = null;
         this.camera = null;
         this.renderer = null;
-        this.controls = null;
         this.sphere = null;
-        this.maze = null;
         this.mazeGroup = null;
 
-        // State
-        this.tiltCount = 0;
-        this.isAnimating = false;
-        this.sphereVelocity = new THREE.Vector3();
-        this.currentPath = [];
-        this.pathIndex = 0;
+        // Physics world
+        this.world = null;
+        this.sphereBody = null;
+        this.wallBodies = [];
+        this.holes = [];
+
+        // Mouse tracking
+        this.mouseX = 0;
+        this.mouseY = 0;
+        this.targetTilt = { x: 0, z: 0 };
+        this.currentTilt = { x: 0, z: 0 };
+
+        // Game state
+        this.gameOver = false;
+        this.isPlaying = true;
 
         // Maze dimensions
-        this.mazeSize = 200;
-        this.wallThickness = 4;
-        this.wallHeight = 30;
-        this.sphereRadius = 9; // 18mm diameter = 9mm radius
+        this.mazeSize = 300;
+        this.wallThickness = 6;
+        this.wallHeight = 40;
+        this.sphereRadius = 8;
+        this.maxTilt = 0.15; // Maximum tilt angle in radians
 
-        // Paths for each tilt (positions the sphere should move through)
-        this.tiltPaths = [
-            // Tilt 1: Start to first corner
-            [
-                new THREE.Vector3(-70, 0, -70), // entrance
-                new THREE.Vector3(-40, 0, -70),
-                new THREE.Vector3(-40, 0, -40)
-            ],
-            // Tilt 2: Navigate through second section
-            [
-                new THREE.Vector3(-40, 0, -40),
-                new THREE.Vector3(-10, 0, -40),
-                new THREE.Vector3(-10, 0, -10),
-                new THREE.Vector3(10, 0, -10)
-            ],
-            // Tilt 3: Approach center area
-            [
-                new THREE.Vector3(10, 0, -10),
-                new THREE.Vector3(10, 0, 20),
-                new THREE.Vector3(30, 0, 20),
-                new THREE.Vector3(30, 0, 40)
-            ],
-            // Tilt 4: Final path to center
-            [
-                new THREE.Vector3(30, 0, 40),
-                new THREE.Vector3(15, 0, 40),
-                new THREE.Vector3(15, 0, 15),
-                new THREE.Vector3(0, 0, 0) // center
-            ]
-        ];
+        // Hole configuration
+        this.holeRadius = 12;
+        this.numberOfHoles = 6;
 
         this.init();
+        this.createHoles();
+        this.setupEventListeners();
         this.animate();
     }
 
     init() {
         // Setup scene
         this.scene = new THREE.Scene();
-        this.scene.background = new THREE.Color(0x1a1a2e);
-        this.scene.fog = new THREE.Fog(0x1a1a2e, 200, 500);
+        this.scene.background = new THREE.Color(0x0a0a0a);
+        this.scene.fog = new THREE.Fog(0x0a0a0a, 300, 600);
 
-        // Setup camera with 25° top-tilt
+        // Setup camera
         const canvas = document.getElementById('labyrinthCanvas');
         this.camera = new THREE.PerspectiveCamera(
-            45,
-            800 / 600,
+            50,
+            window.innerWidth / window.innerHeight,
             0.1,
             1000
         );
-        this.camera.position.set(0, 250, 250);
+        this.camera.position.set(0, 350, 350);
         this.camera.lookAt(0, 0, 0);
 
         // Setup renderer
         this.renderer = new THREE.WebGLRenderer({
             canvas: canvas,
-            antialias: true,
-            alpha: true
+            antialias: true
         });
-        this.renderer.setSize(800, 600);
+        this.renderer.setSize(window.innerWidth, window.innerHeight);
         this.renderer.setPixelRatio(window.devicePixelRatio);
         this.renderer.shadowMap.enabled = true;
         this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
-        // Setup orbit controls with 25° lock
-        this.controls = new THREE.OrbitControls(this.camera, this.renderer.domElement);
-        this.controls.enableDamping = true;
-        this.controls.dampingFactor = 0.05;
-        this.controls.minDistance = 200;
-        this.controls.maxDistance = 400;
-        this.controls.maxPolarAngle = Math.PI / 2.2; // ~25° from top
-        this.controls.minPolarAngle = Math.PI / 3;
-        this.controls.target.set(0, 0, 0);
+        // Setup physics world
+        this.world = new CANNON.World();
+        this.world.gravity.set(0, -30, 0);
+        this.world.broadphase = new CANNON.NaiveBroadphase();
+        this.world.solver.iterations = 10;
 
         // Add lights
         this.addLights();
@@ -103,422 +82,363 @@ class TiltLabyrinth {
 
         // Create sphere
         this.createSphere();
-
-        // Setup UI
-        this.setupUI();
-
-        // Handle window resize
-        window.addEventListener('resize', () => this.onWindowResize());
     }
 
     addLights() {
         // Ambient light
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
         this.scene.add(ambientLight);
 
         // Main directional light
         const mainLight = new THREE.DirectionalLight(0xffffff, 0.8);
-        mainLight.position.set(100, 200, 100);
+        mainLight.position.set(150, 300, 150);
         mainLight.castShadow = true;
         mainLight.shadow.mapSize.width = 2048;
         mainLight.shadow.mapSize.height = 2048;
-        mainLight.shadow.camera.near = 0.5;
-        mainLight.shadow.camera.far = 500;
-        mainLight.shadow.camera.left = -200;
-        mainLight.shadow.camera.right = 200;
-        mainLight.shadow.camera.top = 200;
-        mainLight.shadow.camera.bottom = -200;
+        mainLight.shadow.camera.left = -250;
+        mainLight.shadow.camera.right = 250;
+        mainLight.shadow.camera.top = 250;
+        mainLight.shadow.camera.bottom = -250;
         this.scene.add(mainLight);
 
-        // Fill light
-        const fillLight = new THREE.DirectionalLight(0x7B68EE, 0.4);
-        fillLight.position.set(-100, 100, -100);
-        this.scene.add(fillLight);
+        // Accent lights
+        const purpleLight = new THREE.PointLight(0x764ba2, 1, 400);
+        purpleLight.position.set(-100, 100, -100);
+        this.scene.add(purpleLight);
 
-        // Point light for sphere reflection
-        const pointLight = new THREE.PointLight(0xffffff, 0.6, 300);
-        pointLight.position.set(0, 100, 0);
-        this.scene.add(pointLight);
+        const blueLight = new THREE.PointLight(0x667eea, 1, 400);
+        blueLight.position.set(100, 100, 100);
+        this.scene.add(blueLight);
+
+        // Rim light
+        const rimLight = new THREE.DirectionalLight(0x667eea, 0.5);
+        rimLight.position.set(-150, 100, -150);
+        this.scene.add(rimLight);
     }
 
     createMaze() {
         this.mazeGroup = new THREE.Group();
 
-        // Create base platform (visible through open top/bottom)
-        const baseGeometry = new THREE.BoxGeometry(this.mazeSize, 2, this.mazeSize);
-        const baseMaterial = new THREE.MeshStandardMaterial({
-            color: 0x2d3436,
+        // Material for maze floor and walls
+        const mazeMaterial = new THREE.MeshStandardMaterial({
+            color: 0x2c3e50,
             metalness: 0.3,
-            roughness: 0.7
+            roughness: 0.6
         });
-        const base = new THREE.Mesh(baseGeometry, baseMaterial);
-        base.position.y = -this.wallHeight / 2 - 1;
-        base.receiveShadow = true;
-        this.mazeGroup.add(base);
 
-        // Wall material
         const wallMaterial = new THREE.MeshStandardMaterial({
-            color: 0x667eea,
+            color: 0x34495e,
             metalness: 0.4,
-            roughness: 0.6,
-            transparent: true,
-            opacity: 0.85
+            roughness: 0.5
         });
 
-        // Create 6 outer walls (North, South, East, West, and 2 support walls)
-        // North wall
-        this.createWall(0, 0, -this.mazeSize/2, this.mazeSize, wallMaterial);
-        // South wall
-        this.createWall(0, 0, this.mazeSize/2, this.mazeSize, wallMaterial);
-        // East wall
-        this.createWall(this.mazeSize/2, 0, 0, this.mazeSize, wallMaterial, true);
-        // West wall
-        this.createWall(-this.mazeSize/2, 0, 0, this.mazeSize, wallMaterial, true);
+        // Physics material
+        const physicsMaterial = new CANNON.Material();
 
-        // Inner maze walls to create the path
-        this.createInnerMazeWalls(wallMaterial);
+        // Create floor (will have holes cut into it)
+        const floorGeometry = new THREE.BoxGeometry(this.mazeSize, 4, this.mazeSize);
+        const floor = new THREE.Mesh(floorGeometry, mazeMaterial);
+        floor.position.y = -2;
+        floor.receiveShadow = true;
+        floor.castShadow = true;
+        this.mazeGroup.add(floor);
 
-        // Center disk (goal)
-        const diskGeometry = new THREE.CylinderGeometry(15, 15, 2, 32);
-        const diskMaterial = new THREE.MeshStandardMaterial({
-            color: 0x000000,
-            metalness: 0.8,
-            roughness: 0.2
+        // Floor physics (will be a plane for now, holes handled separately)
+        const floorShape = new CANNON.Box(new CANNON.Vec3(this.mazeSize / 2, 2, this.mazeSize / 2));
+        const floorBody = new CANNON.Body({
+            mass: 0,
+            material: physicsMaterial,
+            shape: floorShape
         });
-        const disk = new THREE.Mesh(diskGeometry, diskMaterial);
-        disk.position.y = -this.wallHeight / 2 + 1;
-        disk.receiveShadow = true;
-        this.mazeGroup.add(disk);
+        floorBody.position.set(0, -2, 0);
+        this.world.addBody(floorBody);
+        this.wallBodies.push(floorBody);
+
+        // Create outer walls
+        this.createWall(0, this.wallHeight / 2, -this.mazeSize / 2, this.mazeSize, this.wallHeight, this.wallThickness, wallMaterial, physicsMaterial);
+        this.createWall(0, this.wallHeight / 2, this.mazeSize / 2, this.mazeSize, this.wallHeight, this.wallThickness, wallMaterial, physicsMaterial);
+        this.createWall(-this.mazeSize / 2, this.wallHeight / 2, 0, this.wallThickness, this.wallHeight, this.mazeSize, wallMaterial, physicsMaterial);
+        this.createWall(this.mazeSize / 2, this.wallHeight / 2, 0, this.wallThickness, this.wallHeight, this.mazeSize, wallMaterial, physicsMaterial);
+
+        // Create inner maze walls for complexity
+        const innerWalls = [
+            // Horizontal walls
+            { x: -80, z: -80, width: 100, height: this.wallHeight, depth: this.wallThickness },
+            { x: 40, z: -50, width: 120, height: this.wallHeight, depth: this.wallThickness },
+            { x: -60, z: 20, width: 80, height: this.wallHeight, depth: this.wallThickness },
+            { x: 60, z: 60, width: 100, height: this.wallHeight, depth: this.wallThickness },
+
+            // Vertical walls
+            { x: -50, z: -40, width: this.wallThickness, height: this.wallHeight, depth: 100 },
+            { x: 20, z: 30, width: this.wallThickness, height: this.wallHeight, depth: 120 },
+            { x: 80, z: -70, width: this.wallThickness, height: this.wallHeight, depth: 80 },
+            { x: -100, z: 70, width: this.wallThickness, height: this.wallHeight, depth: 90 }
+        ];
+
+        innerWalls.forEach(wall => {
+            this.createWall(
+                wall.x,
+                this.wallHeight / 2,
+                wall.z,
+                wall.width,
+                wall.height,
+                wall.depth,
+                wallMaterial,
+                physicsMaterial
+            );
+        });
 
         this.scene.add(this.mazeGroup);
     }
 
-    createWall(x, y, z, length, material, rotateY = false) {
-        const wallGeometry = new THREE.BoxGeometry(
-            rotateY ? this.wallThickness : length,
-            this.wallHeight,
-            rotateY ? length : this.wallThickness
-        );
+    createWall(x, y, z, width, height, depth, material, physicsMaterial) {
+        // Visual wall
+        const wallGeometry = new THREE.BoxGeometry(width, height, depth);
         const wall = new THREE.Mesh(wallGeometry, material);
         wall.position.set(x, y, z);
         wall.castShadow = true;
         wall.receiveShadow = true;
         this.mazeGroup.add(wall);
-        return wall;
+
+        // Physics wall
+        const wallShape = new CANNON.Box(new CANNON.Vec3(width / 2, height / 2, depth / 2));
+        const wallBody = new CANNON.Body({
+            mass: 0,
+            material: physicsMaterial,
+            shape: wallShape
+        });
+        wallBody.position.set(x, y, z);
+        this.world.addBody(wallBody);
+        this.wallBodies.push(wallBody);
     }
 
-    createInnerMazeWalls(material) {
-        // Create inner walls to form the labyrinth path
-        const walls = [
-            // Horizontal walls
-            { x: -55, z: -55, length: 60, rotateY: false },
-            { x: -25, z: -25, length: 40, rotateY: false },
-            { x: 20, z: 5, length: 50, rotateY: false },
-            { x: 45, z: 30, length: 40, rotateY: false },
+    createHoles() {
+        // Create random holes on the floor
+        for (let i = 0; i < this.numberOfHoles; i++) {
+            const x = (Math.random() - 0.5) * (this.mazeSize - 80);
+            const z = (Math.random() - 0.5) * (this.mazeSize - 80);
 
-            // Vertical walls
-            { x: -25, z: -55, length: 40, rotateY: true },
-            { x: 0, z: -25, length: 40, rotateY: true },
-            { x: 25, z: 10, length: 45, rotateY: true },
-            { x: 45, z: 45, length: 30, rotateY: true }
-        ];
+            // Visual hole (dark circle)
+            const holeGeometry = new THREE.CylinderGeometry(this.holeRadius, this.holeRadius, 1, 32);
+            const holeMaterial = new THREE.MeshStandardMaterial({
+                color: 0x000000,
+                emissive: 0xff4757,
+                emissiveIntensity: 0.3,
+                metalness: 0.8,
+                roughness: 0.2
+            });
+            const hole = new THREE.Mesh(holeGeometry, holeMaterial);
+            hole.position.set(x, 0, z);
+            hole.rotation.x = Math.PI / 2;
+            this.mazeGroup.add(hole);
 
-        walls.forEach(w => {
-            this.createWall(w.x, 0, w.z, w.length, material, w.rotateY);
-        });
+            // Store hole position for collision detection
+            this.holes.push({ x, z, radius: this.holeRadius });
+
+            // Add glowing ring around hole
+            const ringGeometry = new THREE.RingGeometry(this.holeRadius, this.holeRadius + 2, 32);
+            const ringMaterial = new THREE.MeshBasicMaterial({
+                color: 0xff4757,
+                side: THREE.DoubleSide,
+                transparent: true,
+                opacity: 0.6
+            });
+            const ring = new THREE.Mesh(ringGeometry, ringMaterial);
+            ring.position.set(x, 0.5, z);
+            ring.rotation.x = -Math.PI / 2;
+            this.mazeGroup.add(ring);
+        }
     }
 
     createSphere() {
-        // Create reflective metal sphere (18mm diameter)
+        // Visual sphere
         const sphereGeometry = new THREE.SphereGeometry(this.sphereRadius, 32, 32);
         const sphereMaterial = new THREE.MeshStandardMaterial({
-            color: 0xcccccc,
-            metalness: 0.95,
-            roughness: 0.05,
-            envMapIntensity: 1.5
+            color: 0xecf0f1,
+            metalness: 0.9,
+            roughness: 0.1,
+            envMapIntensity: 1
         });
 
         this.sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
-        this.sphere.position.copy(this.tiltPaths[0][0]);
-        this.sphere.position.y = this.sphereRadius - this.wallHeight / 2 + 1;
         this.sphere.castShadow = true;
         this.sphere.receiveShadow = true;
-
         this.scene.add(this.sphere);
 
-        // Add environment map for reflections
-        const cubeRenderTarget = new THREE.WebGLCubeRenderTarget(256, {
-            format: THREE.RGBFormat,
-            generateMipmaps: true,
-            minFilter: THREE.LinearMipmapLinearFilter
+        // Physics sphere
+        const sphereShape = new CANNON.Sphere(this.sphereRadius);
+        this.sphereBody = new CANNON.Body({
+            mass: 1,
+            shape: sphereShape,
+            linearDamping: 0.3,
+            angularDamping: 0.3
+        });
+        this.sphereBody.position.set(0, 50, 0);
+        this.world.addBody(this.sphereBody);
+
+        // Contact material between sphere and maze
+        const contactMaterial = new CANNON.ContactMaterial(
+            this.sphereBody.material,
+            this.wallBodies[0].material,
+            {
+                friction: 0.3,
+                restitution: 0.4
+            }
+        );
+        this.world.addContactMaterial(contactMaterial);
+    }
+
+    setupEventListeners() {
+        // Mouse movement
+        window.addEventListener('mousemove', (e) => {
+            this.mouseX = (e.clientX / window.innerWidth) * 2 - 1;
+            this.mouseY = -(e.clientY / window.innerHeight) * 2 + 1;
         });
 
-        const cubeCamera = new THREE.CubeCamera(0.1, 1000, cubeRenderTarget);
-        this.scene.add(cubeCamera);
-        sphereMaterial.envMap = cubeRenderTarget.texture;
+        // Keyboard controls
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 'r' || e.key === 'R') {
+                this.restart();
+            }
+        });
+
+        // Restart button
+        document.getElementById('restartBtn').addEventListener('click', () => {
+            this.restart();
+        });
+
+        // Window resize
+        window.addEventListener('resize', () => {
+            this.camera.aspect = window.innerWidth / window.innerHeight;
+            this.camera.updateProjectionMatrix();
+            this.renderer.setSize(window.innerWidth, window.innerHeight);
+        });
     }
 
-    setupUI() {
-        document.getElementById('tiltUp').addEventListener('click', () => this.handleTilt('up'));
-        document.getElementById('tiltDown').addEventListener('click', () => this.handleTilt('down'));
-        document.getElementById('tiltLeft').addEventListener('click', () => this.handleTilt('left'));
-        document.getElementById('tiltRight').addEventListener('click', () => this.handleTilt('right'));
-        document.getElementById('reset').addEventListener('click', () => this.reset());
+    updateMazeTilt() {
+        // Smooth tilt based on mouse position
+        this.targetTilt.x = this.mouseY * this.maxTilt;
+        this.targetTilt.z = -this.mouseX * this.maxTilt;
+
+        // Smooth interpolation
+        this.currentTilt.x += (this.targetTilt.x - this.currentTilt.x) * 0.1;
+        this.currentTilt.z += (this.targetTilt.z - this.currentTilt.z) * 0.1;
+
+        // Apply tilt to maze
+        this.mazeGroup.rotation.x = this.currentTilt.x;
+        this.mazeGroup.rotation.z = this.currentTilt.z;
+
+        // Update physics world gravity based on tilt
+        const gravityStrength = 30;
+        this.world.gravity.set(
+            Math.sin(this.currentTilt.z) * gravityStrength,
+            -gravityStrength,
+            -Math.sin(this.currentTilt.x) * gravityStrength
+        );
     }
 
-    handleTilt(direction) {
-        if (this.isAnimating || this.tiltCount >= 4) return;
+    checkHoleCollision() {
+        const spherePos = this.sphereBody.position;
 
-        this.isAnimating = true;
-        this.tiltCount++;
+        // Check if sphere is near floor level
+        if (spherePos.y < 10 && spherePos.y > -5) {
+            for (let hole of this.holes) {
+                const dx = spherePos.x - hole.x;
+                const dz = spherePos.z - hole.z;
+                const distance = Math.sqrt(dx * dx + dz * dz);
 
-        // Update UI
-        document.getElementById('tiltCount').textContent = this.tiltCount;
-        document.getElementById('message').textContent = `Tilt ${this.tiltCount} of 4 - Moving sphere...`;
-
-        // Disable buttons during animation
-        this.setButtonsEnabled(false);
-
-        // Get current path
-        this.currentPath = this.tiltPaths[this.tiltCount - 1];
-        this.pathIndex = 0;
-
-        // Calculate speed (increases with each tilt)
-        const baseSpeed = 0.5;
-        const speedMultiplier = 1 + (this.tiltCount - 1) * 0.3;
-        const speed = baseSpeed * speedMultiplier;
-
-        if (this.tiltCount === 4) {
-            // Special 4th tilt sequence
-            this.animateToCenter(speed, () => {
-                this.triggerFourthTiltFeedback();
-            });
-        } else {
-            // Normal tilt animation
-            this.animateAlongPath(speed, () => {
-                this.isAnimating = false;
-                this.setButtonsEnabled(true);
-                document.getElementById('message').textContent = `Tilt ${this.tiltCount} complete! ${4 - this.tiltCount} more to go.`;
-            });
+                if (distance < hole.radius - 2) {
+                    this.triggerGameOver();
+                    return true;
+                }
+            }
         }
-    }
 
-    animateAlongPath(speed, callback) {
-        if (this.pathIndex >= this.currentPath.length) {
-            callback();
-            return;
+        // Check if sphere fell off the world
+        if (spherePos.y < -50) {
+            this.triggerGameOver();
+            return true;
         }
 
-        const targetPos = this.currentPath[this.pathIndex].clone();
-        targetPos.y = this.sphereRadius - this.wallHeight / 2 + 1;
+        return false;
+    }
 
-        const distance = this.sphere.position.distanceTo(targetPos);
-        const duration = (distance / speed) * 16; // Convert to frames
+    triggerGameOver() {
+        if (this.gameOver) return;
 
-        this.animateSphereToPosition(targetPos, duration, () => {
-            this.pathIndex++;
-            this.animateAlongPath(speed, callback);
+        this.gameOver = true;
+        this.isPlaying = false;
+
+        // Show game over screen
+        document.getElementById('gameOver').classList.remove('hidden');
+        document.getElementById('instructions').classList.add('hidden');
+    }
+
+    restart() {
+        // Reset game state
+        this.gameOver = false;
+        this.isPlaying = true;
+
+        // Hide game over screen
+        document.getElementById('gameOver').classList.add('hidden');
+        document.getElementById('instructions').classList.remove('hidden');
+
+        // Reset sphere position and velocity
+        this.sphereBody.position.set(0, 50, 0);
+        this.sphereBody.velocity.set(0, 0, 0);
+        this.sphereBody.angularVelocity.set(0, 0, 0);
+
+        // Reset maze tilt
+        this.currentTilt = { x: 0, z: 0 };
+        this.targetTilt = { x: 0, z: 0 };
+        this.mazeGroup.rotation.x = 0;
+        this.mazeGroup.rotation.z = 0;
+
+        // Regenerate holes in new positions
+        this.regenerateHoles();
+    }
+
+    regenerateHoles() {
+        // Remove old holes from scene
+        const holeMeshes = [];
+        this.mazeGroup.children.forEach(child => {
+            if (child.geometry && (child.geometry.type === 'CylinderGeometry' || child.geometry.type === 'RingGeometry')) {
+                holeMeshes.push(child);
+            }
         });
-    }
+        holeMeshes.forEach(mesh => this.mazeGroup.remove(mesh));
 
-    animateToCenter(speed, callback) {
-        this.animateAlongPath(speed, callback);
-    }
+        // Clear holes array
+        this.holes = [];
 
-    animateSphereToPosition(targetPos, duration, callback) {
-        const startPos = this.sphere.position.clone();
-        const startTime = Date.now();
-
-        const animate = () => {
-            const elapsed = Date.now() - startTime;
-            const progress = Math.min(elapsed / duration, 1);
-
-            // Easing function
-            const eased = this.easeInOutQuad(progress);
-
-            this.sphere.position.lerpVectors(startPos, targetPos, eased);
-
-            if (progress < 1) {
-                requestAnimationFrame(animate);
-            } else {
-                callback();
-            }
-        };
-
-        animate();
-    }
-
-    triggerFourthTiltFeedback() {
-        document.getElementById('message').textContent = 'Success! Triggering special sequence...';
-
-        const initialMazeY = this.mazeGroup.position.y;
-        const initialSpherePos = this.sphere.position.clone();
-
-        // Step 1: Drop maze 8% down with 0.2s buffer easing
-        this.animateMazeDrop(initialMazeY, () => {
-            // Step 2: Launch sphere upward 12%
-            this.animateSphereLaunch(initialSpherePos, () => {
-                // Step 3: Orbit 2 loops around maze exterior at 12% radius
-                this.animateSphereOrbit(() => {
-                    // Step 4: Settle back to center
-                    this.animateSphereSettle(() => {
-                        // Final state
-                        this.isAnimating = false;
-                        document.getElementById('message').textContent = 'Journey complete! The sphere has found its home.';
-
-                        // Keep orbit controls active
-                        this.controls.enabled = true;
-                    });
-                });
-            });
-        });
-    }
-
-    animateMazeDrop(initialY, callback) {
-        const dropDistance = this.mazeSize * 0.08; // 8% down
-        const targetY = initialY - dropDistance;
-        const duration = 200; // 0.2s
-        const startTime = Date.now();
-
-        const animate = () => {
-            const elapsed = Date.now() - startTime;
-            const progress = Math.min(elapsed / duration, 1);
-            const eased = this.easeInOutCubic(progress);
-
-            this.mazeGroup.position.y = initialY + (targetY - initialY) * eased;
-
-            if (progress < 1) {
-                requestAnimationFrame(animate);
-            } else {
-                callback();
-            }
-        };
-
-        animate();
-    }
-
-    animateSphereLaunch(initialPos, callback) {
-        const launchHeight = this.mazeSize * 0.12; // 12% up
-        const targetY = initialPos.y + launchHeight;
-        const duration = 400;
-        const startTime = Date.now();
-
-        const animate = () => {
-            const elapsed = Date.now() - startTime;
-            const progress = Math.min(elapsed / duration, 1);
-            const eased = 1 - Math.pow(1 - progress, 3); // Ease out cubic
-
-            this.sphere.position.y = initialPos.y + (targetY - initialPos.y) * eased;
-
-            if (progress < 1) {
-                requestAnimationFrame(animate);
-            } else {
-                callback();
-            }
-        };
-
-        animate();
-    }
-
-    animateSphereOrbit(callback) {
-        const orbitRadius = this.mazeSize * 0.12; // 12% radius
-        const loops = 2;
-        const duration = 2000; // 2 seconds for 2 loops
-        const startTime = Date.now();
-        const centerY = this.sphere.position.y;
-
-        const animate = () => {
-            const elapsed = Date.now() - startTime;
-            const progress = Math.min(elapsed / duration, 1);
-
-            // Calculate orbit position
-            const angle = progress * loops * Math.PI * 2;
-            this.sphere.position.x = Math.cos(angle) * orbitRadius;
-            this.sphere.position.z = Math.sin(angle) * orbitRadius;
-
-            if (progress < 1) {
-                requestAnimationFrame(animate);
-            } else {
-                callback();
-            }
-        };
-
-        animate();
-    }
-
-    animateSphereSettle(callback) {
-        const targetPos = new THREE.Vector3(0, this.sphereRadius - this.wallHeight / 2 + 1, 0);
-        const duration = 800;
-        const startTime = Date.now();
-        const startPos = this.sphere.position.clone();
-
-        const animate = () => {
-            const elapsed = Date.now() - startTime;
-            const progress = Math.min(elapsed / duration, 1);
-            const eased = this.easeInOutQuad(progress);
-
-            this.sphere.position.lerpVectors(startPos, targetPos, eased);
-
-            if (progress < 1) {
-                requestAnimationFrame(animate);
-            } else {
-                callback();
-            }
-        };
-
-        animate();
-    }
-
-    easeInOutQuad(t) {
-        return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
-    }
-
-    easeInOutCubic(t) {
-        return t < 0.5 ? 4 * t * t * t : (t - 1) * (2 * t - 2) * (2 * t - 2) + 1;
-    }
-
-    setButtonsEnabled(enabled) {
-        const buttons = document.querySelectorAll('.tilt-btn');
-        buttons.forEach(btn => btn.disabled = !enabled);
-    }
-
-    reset() {
-        // Reset all state
-        this.tiltCount = 0;
-        this.isAnimating = false;
-        this.pathIndex = 0;
-
-        // Reset sphere position
-        this.sphere.position.copy(this.tiltPaths[0][0]);
-        this.sphere.position.y = this.sphereRadius - this.wallHeight / 2 + 1;
-
-        // Reset maze position
-        this.mazeGroup.position.y = 0;
-
-        // Reset UI
-        document.getElementById('tiltCount').textContent = '0';
-        document.getElementById('message').textContent = 'Start tilting to move the sphere!';
-        this.setButtonsEnabled(true);
-    }
-
-    onWindowResize() {
-        const width = Math.min(window.innerWidth - 400, 800);
-        const height = Math.min(window.innerHeight - 100, 600);
-
-        this.camera.aspect = width / height;
-        this.camera.updateProjectionMatrix();
-        this.renderer.setSize(width, height);
+        // Create new holes
+        this.createHoles();
     }
 
     animate() {
         requestAnimationFrame(() => this.animate());
 
-        this.controls.update();
+        if (this.isPlaying) {
+            // Update physics
+            this.world.step(1 / 60);
+
+            // Update maze tilt
+            this.updateMazeTilt();
+
+            // Sync sphere visual with physics
+            this.sphere.position.copy(this.sphereBody.position);
+            this.sphere.quaternion.copy(this.sphereBody.quaternion);
+
+            // Check for hole collisions
+            this.checkHoleCollision();
+        }
+
+        // Render scene
         this.renderer.render(this.scene, this.camera);
     }
 }
 
 // Initialize the game when the page loads
 window.addEventListener('DOMContentLoaded', () => {
-    const game = new TiltLabyrinth();
+    const game = new MouseMaze();
 });
