@@ -1,4 +1,4 @@
-// 3D Mouse-Controlled Maze Game with Physics
+// 3D Multi-Level Maze Game with Physics
 class MouseMaze {
     constructor() {
         // Three.js objects
@@ -12,6 +12,7 @@ class MouseMaze {
         this.world = null;
         this.sphereBody = null;
         this.wallBodies = [];
+        this.platformBodies = [];
         this.holes = [];
 
         // Mouse tracking
@@ -25,17 +26,26 @@ class MouseMaze {
         this.isPlaying = true;
 
         // Maze dimensions
-        this.mazeSize = 300;
-        this.wallThickness = 6;
-        this.wallHeight = 40;
+        this.mazeSize = 400;
+        this.wallThickness = 5;
+        this.wallHeight = 35;
         this.sphereRadius = 8;
-        this.maxTilt = 0.15; // Maximum tilt angle in radians
+        this.maxTilt = 0.2; // Maximum tilt angle in radians
+
+        // 3D Level configuration
+        this.levels = [
+            { y: 0, size: 300 },      // Bottom level
+            { y: 40, size: 250 },     // Mid-low level
+            { y: 80, size: 200 },     // Mid-high level
+            { y: 120, size: 150 }     // Top level
+        ];
 
         // Hole configuration
-        this.holeRadius = 12;
-        this.numberOfHoles = 6;
+        this.holeRadius = 15;
+        this.numberOfHoles = 8;
 
         this.init();
+        this.createMultiLevelMaze();
         this.createHoles();
         this.setupEventListeners();
         this.animate();
@@ -45,18 +55,18 @@ class MouseMaze {
         // Setup scene
         this.scene = new THREE.Scene();
         this.scene.background = new THREE.Color(0x0a0a0a);
-        this.scene.fog = new THREE.Fog(0x0a0a0a, 300, 600);
+        this.scene.fog = new THREE.Fog(0x0a0a0a, 400, 800);
 
-        // Setup camera
+        // Setup camera with better 3D perspective
         const canvas = document.getElementById('labyrinthCanvas');
         this.camera = new THREE.PerspectiveCamera(
-            50,
+            60,
             window.innerWidth / window.innerHeight,
             0.1,
             1000
         );
-        this.camera.position.set(0, 350, 350);
-        this.camera.lookAt(0, 0, 0);
+        this.camera.position.set(300, 400, 300);
+        this.camera.lookAt(0, 60, 0);
 
         // Setup renderer
         this.renderer = new THREE.WebGLRenderer({
@@ -70,125 +80,223 @@ class MouseMaze {
 
         // Setup physics world
         this.world = new CANNON.World();
-        this.world.gravity.set(0, -30, 0);
+        this.world.gravity.set(0, -40, 0);
         this.world.broadphase = new CANNON.NaiveBroadphase();
-        this.world.solver.iterations = 10;
+        this.world.solver.iterations = 15;
 
         // Add lights
         this.addLights();
 
-        // Create maze
-        this.createMaze();
-
-        // Create sphere
-        this.createSphere();
+        this.mazeGroup = new THREE.Group();
+        this.scene.add(this.mazeGroup);
     }
 
     addLights() {
         // Ambient light
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
         this.scene.add(ambientLight);
 
-        // Main directional light
-        const mainLight = new THREE.DirectionalLight(0xffffff, 0.8);
-        mainLight.position.set(150, 300, 150);
+        // Main directional light from top
+        const mainLight = new THREE.DirectionalLight(0xffffff, 1);
+        mainLight.position.set(200, 500, 200);
         mainLight.castShadow = true;
         mainLight.shadow.mapSize.width = 2048;
         mainLight.shadow.mapSize.height = 2048;
-        mainLight.shadow.camera.left = -250;
-        mainLight.shadow.camera.right = 250;
-        mainLight.shadow.camera.top = 250;
-        mainLight.shadow.camera.bottom = -250;
+        mainLight.shadow.camera.left = -300;
+        mainLight.shadow.camera.right = 300;
+        mainLight.shadow.camera.top = 300;
+        mainLight.shadow.camera.bottom = -300;
+        mainLight.shadow.camera.near = 100;
+        mainLight.shadow.camera.far = 800;
         this.scene.add(mainLight);
 
-        // Accent lights
-        const purpleLight = new THREE.PointLight(0x764ba2, 1, 400);
-        purpleLight.position.set(-100, 100, -100);
+        // Accent lights for depth
+        const purpleLight = new THREE.PointLight(0x764ba2, 1.5, 500);
+        purpleLight.position.set(-150, 150, -150);
         this.scene.add(purpleLight);
 
-        const blueLight = new THREE.PointLight(0x667eea, 1, 400);
-        blueLight.position.set(100, 100, 100);
+        const blueLight = new THREE.PointLight(0x667eea, 1.5, 500);
+        blueLight.position.set(150, 150, 150);
         this.scene.add(blueLight);
 
-        // Rim light
-        const rimLight = new THREE.DirectionalLight(0x667eea, 0.5);
-        rimLight.position.set(-150, 100, -150);
+        // Bottom rim light
+        const rimLight = new THREE.DirectionalLight(0x4a90e2, 0.4);
+        rimLight.position.set(-200, 50, -200);
         this.scene.add(rimLight);
     }
 
-    createMaze() {
-        this.mazeGroup = new THREE.Group();
+    createMultiLevelMaze() {
+        const physicsMaterial = new CANNON.Material();
 
-        // Material for maze floor and walls
-        const mazeMaterial = new THREE.MeshStandardMaterial({
-            color: 0x2c3e50,
+        // Create platforms at different heights
+        this.levels.forEach((level, index) => {
+            this.createPlatformLevel(level.y, level.size, index, physicsMaterial);
+        });
+
+        // Create connecting ramps between levels
+        this.createRamp(-80, 0, -80, 40, 60, 1);
+        this.createRamp(60, 40, 60, 80, 60, 2);
+        this.createRamp(-50, 80, 50, 120, 50, 3);
+
+        // Create outer boundary walls
+        this.createBoundaryWalls(physicsMaterial);
+
+        // Create 3D inner maze walls at various heights
+        this.create3DInnerWalls(physicsMaterial);
+
+        // Create sphere
+        this.createSphere(physicsMaterial);
+    }
+
+    createPlatformLevel(yPos, size, levelIndex, physicsMaterial) {
+        // Platform appearance varies by level
+        const colors = [0x2c3e50, 0x34495e, 0x3d566e, 0x495f7e];
+        const platformMaterial = new THREE.MeshStandardMaterial({
+            color: colors[levelIndex],
             metalness: 0.3,
             roughness: 0.6
         });
 
+        // Main platform
+        const platformThickness = 4;
+        const platformGeometry = new THREE.BoxGeometry(size, platformThickness, size);
+        const platform = new THREE.Mesh(platformGeometry, platformMaterial);
+        platform.position.set(0, yPos - platformThickness / 2, 0);
+        platform.receiveShadow = true;
+        platform.castShadow = true;
+        this.mazeGroup.add(platform);
+
+        // Physics platform
+        const platformShape = new CANNON.Box(new CANNON.Vec3(size / 2, platformThickness / 2, size / 2));
+        const platformBody = new CANNON.Body({
+            mass: 0,
+            material: physicsMaterial,
+            shape: platformShape
+        });
+        platformBody.position.set(0, yPos - platformThickness / 2, 0);
+        this.world.addBody(platformBody);
+        this.platformBodies.push({ body: platformBody, y: yPos, size: size });
+
+        // Add decorative edges to platforms
+        const edgeMaterial = new THREE.MeshStandardMaterial({
+            color: 0x667eea,
+            metalness: 0.5,
+            roughness: 0.4,
+            emissive: 0x667eea,
+            emissiveIntensity: 0.2
+        });
+
+        // Create edge highlights
+        const edgeThickness = 2;
+        const edges = [
+            { pos: [0, yPos, -size / 2], size: [size, edgeThickness, edgeThickness] },
+            { pos: [0, yPos, size / 2], size: [size, edgeThickness, edgeThickness] },
+            { pos: [-size / 2, yPos, 0], size: [edgeThickness, edgeThickness, size] },
+            { pos: [size / 2, yPos, 0], size: [edgeThickness, edgeThickness, size] }
+        ];
+
+        edges.forEach(edge => {
+            const edgeGeometry = new THREE.BoxGeometry(...edge.size);
+            const edgeMesh = new THREE.Mesh(edgeGeometry, edgeMaterial);
+            edgeMesh.position.set(...edge.pos);
+            edgeMesh.castShadow = true;
+            this.mazeGroup.add(edgeMesh);
+        });
+    }
+
+    createRamp(x, fromY, z, toY, length, index) {
+        const rampMaterial = new THREE.MeshStandardMaterial({
+            color: 0x3498db,
+            metalness: 0.4,
+            roughness: 0.5
+        });
+
+        const rampWidth = 30;
+        const rampThickness = 4;
+        const heightDiff = toY - fromY;
+        const angle = Math.atan2(heightDiff, length);
+
+        // Visual ramp
+        const rampGeometry = new THREE.BoxGeometry(rampWidth, rampThickness, length);
+        const ramp = new THREE.Mesh(rampGeometry, rampMaterial);
+        ramp.position.set(x, (fromY + toY) / 2, z);
+        ramp.rotation.x = -angle;
+        ramp.castShadow = true;
+        ramp.receiveShadow = true;
+        this.mazeGroup.add(ramp);
+
+        // Physics ramp
+        const rampShape = new CANNON.Box(new CANNON.Vec3(rampWidth / 2, rampThickness / 2, length / 2));
+        const rampBody = new CANNON.Body({
+            mass: 0,
+            shape: rampShape
+        });
+        rampBody.position.set(x, (fromY + toY) / 2, z);
+        rampBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -angle);
+        this.world.addBody(rampBody);
+        this.wallBodies.push(rampBody);
+    }
+
+    createBoundaryWalls(physicsMaterial) {
+        const wallMaterial = new THREE.MeshStandardMaterial({
+            color: 0x2c3e50,
+            metalness: 0.4,
+            roughness: 0.5,
+            transparent: true,
+            opacity: 0.7
+        });
+
+        const boundarySize = this.mazeSize / 2 + 20;
+        const boundaryHeight = 180;
+
+        const walls = [
+            { x: 0, z: -boundarySize, width: boundarySize * 2, depth: this.wallThickness },
+            { x: 0, z: boundarySize, width: boundarySize * 2, depth: this.wallThickness },
+            { x: -boundarySize, z: 0, width: this.wallThickness, depth: boundarySize * 2 },
+            { x: boundarySize, z: 0, width: this.wallThickness, depth: boundarySize * 2 }
+        ];
+
+        walls.forEach(wall => {
+            this.createWall(wall.x, boundaryHeight / 2, wall.z, wall.width, boundaryHeight, wall.depth, wallMaterial, physicsMaterial);
+        });
+    }
+
+    create3DInnerWalls(physicsMaterial) {
         const wallMaterial = new THREE.MeshStandardMaterial({
             color: 0x34495e,
             metalness: 0.4,
             roughness: 0.5
         });
 
-        // Physics material
-        const physicsMaterial = new CANNON.Material();
-
-        // Create floor (will have holes cut into it)
-        const floorGeometry = new THREE.BoxGeometry(this.mazeSize, 4, this.mazeSize);
-        const floor = new THREE.Mesh(floorGeometry, mazeMaterial);
-        floor.position.y = -2;
-        floor.receiveShadow = true;
-        floor.castShadow = true;
-        this.mazeGroup.add(floor);
-
-        // Floor physics (will be a plane for now, holes handled separately)
-        const floorShape = new CANNON.Box(new CANNON.Vec3(this.mazeSize / 2, 2, this.mazeSize / 2));
-        const floorBody = new CANNON.Body({
-            mass: 0,
-            material: physicsMaterial,
-            shape: floorShape
-        });
-        floorBody.position.set(0, -2, 0);
-        this.world.addBody(floorBody);
-        this.wallBodies.push(floorBody);
-
-        // Create outer walls
-        this.createWall(0, this.wallHeight / 2, -this.mazeSize / 2, this.mazeSize, this.wallHeight, this.wallThickness, wallMaterial, physicsMaterial);
-        this.createWall(0, this.wallHeight / 2, this.mazeSize / 2, this.mazeSize, this.wallHeight, this.wallThickness, wallMaterial, physicsMaterial);
-        this.createWall(-this.mazeSize / 2, this.wallHeight / 2, 0, this.wallThickness, this.wallHeight, this.mazeSize, wallMaterial, physicsMaterial);
-        this.createWall(this.mazeSize / 2, this.wallHeight / 2, 0, this.wallThickness, this.wallHeight, this.mazeSize, wallMaterial, physicsMaterial);
-
-        // Create inner maze walls for complexity
+        // Walls at different heights creating 3D maze structure
         const innerWalls = [
-            // Horizontal walls
-            { x: -80, z: -80, width: 100, height: this.wallHeight, depth: this.wallThickness },
-            { x: 40, z: -50, width: 120, height: this.wallHeight, depth: this.wallThickness },
-            { x: -60, z: 20, width: 80, height: this.wallHeight, depth: this.wallThickness },
-            { x: 60, z: 60, width: 100, height: this.wallHeight, depth: this.wallThickness },
+            // Level 0 walls
+            { x: -60, y: 18, z: -60, width: 80, height: 35, depth: this.wallThickness },
+            { x: 50, y: 18, z: -80, width: 100, height: 35, depth: this.wallThickness },
+            { x: -80, y: 18, z: 40, width: this.wallThickness, height: 35, depth: 100 },
+            { x: 70, y: 18, z: 60, width: this.wallThickness, height: 35, depth: 80 },
 
-            // Vertical walls
-            { x: -50, z: -40, width: this.wallThickness, height: this.wallHeight, depth: 100 },
-            { x: 20, z: 30, width: this.wallThickness, height: this.wallHeight, depth: 120 },
-            { x: 80, z: -70, width: this.wallThickness, height: this.wallHeight, depth: 80 },
-            { x: -100, z: 70, width: this.wallThickness, height: this.wallHeight, depth: 90 }
+            // Level 1 walls (mid-low)
+            { x: -40, y: 60, z: -40, width: 70, height: 40, depth: this.wallThickness },
+            { x: 40, y: 60, z: 30, width: 80, height: 40, depth: this.wallThickness },
+            { x: 30, y: 60, z: -50, width: this.wallThickness, height: 40, depth: 70 },
+            { x: -60, y: 60, z: 50, width: this.wallThickness, height: 40, depth: 60 },
+
+            // Level 2 walls (mid-high)
+            { x: -30, y: 100, z: -30, width: 60, height: 40, depth: this.wallThickness },
+            { x: 30, y: 100, z: 20, width: 60, height: 40, depth: this.wallThickness },
+            { x: 20, y: 100, z: -40, width: this.wallThickness, height: 40, depth: 50 },
+            { x: -40, y: 100, z: 35, width: this.wallThickness, height: 40, depth: 50 },
+
+            // Level 3 walls (top)
+            { x: 0, y: 140, z: -20, width: 50, height: 40, depth: this.wallThickness },
+            { x: -15, y: 140, z: 15, width: this.wallThickness, height: 40, depth: 50 },
+            { x: 20, y: 140, z: 0, width: this.wallThickness, height: 40, depth: 40 }
         ];
 
         innerWalls.forEach(wall => {
-            this.createWall(
-                wall.x,
-                this.wallHeight / 2,
-                wall.z,
-                wall.width,
-                wall.height,
-                wall.depth,
-                wallMaterial,
-                physicsMaterial
-            );
+            this.createWall(wall.x, wall.y, wall.z, wall.width, wall.height, wall.depth, wallMaterial, physicsMaterial);
         });
-
-        this.scene.add(this.mazeGroup);
     }
 
     createWall(x, y, z, width, height, depth, material, physicsMaterial) {
@@ -213,44 +321,70 @@ class MouseMaze {
     }
 
     createHoles() {
-        // Create random holes on the floor
-        for (let i = 0; i < this.numberOfHoles; i++) {
-            const x = (Math.random() - 0.5) * (this.mazeSize - 80);
-            const z = (Math.random() - 0.5) * (this.mazeSize - 80);
+        // Create holes on different levels
+        const holesPerLevel = [3, 2, 2, 1]; // Distribution across levels
 
-            // Visual hole (dark circle)
-            const holeGeometry = new THREE.CylinderGeometry(this.holeRadius, this.holeRadius, 1, 32);
-            const holeMaterial = new THREE.MeshStandardMaterial({
-                color: 0x000000,
-                emissive: 0xff4757,
-                emissiveIntensity: 0.3,
-                metalness: 0.8,
-                roughness: 0.2
-            });
-            const hole = new THREE.Mesh(holeGeometry, holeMaterial);
-            hole.position.set(x, 0, z);
-            hole.rotation.x = Math.PI / 2;
-            this.mazeGroup.add(hole);
+        let holeIndex = 0;
+        this.levels.forEach((level, levelIndex) => {
+            const numHoles = holesPerLevel[levelIndex];
+            const safeMargin = 40;
 
-            // Store hole position for collision detection
-            this.holes.push({ x, z, radius: this.holeRadius });
+            for (let i = 0; i < numHoles && holeIndex < this.numberOfHoles; i++) {
+                const x = (Math.random() - 0.5) * (level.size - safeMargin);
+                const z = (Math.random() - 0.5) * (level.size - safeMargin);
+                const y = level.y;
 
-            // Add glowing ring around hole
-            const ringGeometry = new THREE.RingGeometry(this.holeRadius, this.holeRadius + 2, 32);
-            const ringMaterial = new THREE.MeshBasicMaterial({
-                color: 0xff4757,
-                side: THREE.DoubleSide,
-                transparent: true,
-                opacity: 0.6
-            });
-            const ring = new THREE.Mesh(ringGeometry, ringMaterial);
-            ring.position.set(x, 0.5, z);
-            ring.rotation.x = -Math.PI / 2;
-            this.mazeGroup.add(ring);
-        }
+                // Visual hole (glowing pit)
+                const holeGeometry = new THREE.CylinderGeometry(this.holeRadius, this.holeRadius * 0.8, 3, 32);
+                const holeMaterial = new THREE.MeshStandardMaterial({
+                    color: 0x000000,
+                    emissive: 0xff4757,
+                    emissiveIntensity: 0.5,
+                    metalness: 0.8,
+                    roughness: 0.2
+                });
+                const hole = new THREE.Mesh(holeGeometry, holeMaterial);
+                hole.position.set(x, y, z);
+                this.mazeGroup.add(hole);
+
+                // Store hole position for collision detection
+                this.holes.push({ x, y, z, radius: this.holeRadius });
+
+                // Add glowing ring around hole
+                const ringGeometry = new THREE.TorusGeometry(this.holeRadius + 2, 1.5, 16, 32);
+                const ringMaterial = new THREE.MeshBasicMaterial({
+                    color: 0xff4757,
+                    transparent: true,
+                    opacity: 0.7
+                });
+                const ring = new THREE.Mesh(ringGeometry, ringMaterial);
+                ring.position.set(x, y, z);
+                ring.rotation.x = Math.PI / 2;
+                this.mazeGroup.add(ring);
+
+                // Add particle effect (small cubes floating above hole)
+                for (let j = 0; j < 3; j++) {
+                    const particleGeometry = new THREE.BoxGeometry(2, 2, 2);
+                    const particleMaterial = new THREE.MeshBasicMaterial({
+                        color: 0xff4757,
+                        transparent: true,
+                        opacity: 0.6
+                    });
+                    const particle = new THREE.Mesh(particleGeometry, particleMaterial);
+                    particle.position.set(
+                        x + (Math.random() - 0.5) * 10,
+                        y + 5 + j * 5,
+                        z + (Math.random() - 0.5) * 10
+                    );
+                    this.mazeGroup.add(particle);
+                }
+
+                holeIndex++;
+            }
+        });
     }
 
-    createSphere() {
+    createSphere(physicsMaterial) {
         // Visual sphere
         const sphereGeometry = new THREE.SphereGeometry(this.sphereRadius, 32, 32);
         const sphereMaterial = new THREE.MeshStandardMaterial({
@@ -273,16 +407,16 @@ class MouseMaze {
             linearDamping: 0.3,
             angularDamping: 0.3
         });
-        this.sphereBody.position.set(0, 50, 0);
+        this.sphereBody.position.set(0, 150, 0); // Start at top level
         this.world.addBody(this.sphereBody);
 
         // Contact material between sphere and maze
         const contactMaterial = new CANNON.ContactMaterial(
             this.sphereBody.material,
-            this.wallBodies[0].material,
+            physicsMaterial,
             {
-                friction: 0.3,
-                restitution: 0.4
+                friction: 0.4,
+                restitution: 0.3
             }
         );
         this.world.addContactMaterial(contactMaterial);
@@ -329,7 +463,7 @@ class MouseMaze {
         this.mazeGroup.rotation.z = this.currentTilt.z;
 
         // Update physics world gravity based on tilt
-        const gravityStrength = 30;
+        const gravityStrength = 40;
         this.world.gravity.set(
             Math.sin(this.currentTilt.z) * gravityStrength,
             -gravityStrength,
@@ -340,17 +474,17 @@ class MouseMaze {
     checkHoleCollision() {
         const spherePos = this.sphereBody.position;
 
-        // Check if sphere is near floor level
-        if (spherePos.y < 10 && spherePos.y > -5) {
-            for (let hole of this.holes) {
-                const dx = spherePos.x - hole.x;
-                const dz = spherePos.z - hole.z;
-                const distance = Math.sqrt(dx * dx + dz * dz);
+        // Check collision with holes at any level
+        for (let hole of this.holes) {
+            const dx = spherePos.x - hole.x;
+            const dy = spherePos.y - hole.y;
+            const dz = spherePos.z - hole.z;
+            const distance2D = Math.sqrt(dx * dx + dz * dz);
 
-                if (distance < hole.radius - 2) {
-                    this.triggerGameOver();
-                    return true;
-                }
+            // Check if sphere is near the hole's level and within radius
+            if (Math.abs(dy) < this.sphereRadius + 5 && distance2D < hole.radius - 3) {
+                this.triggerGameOver();
+                return true;
             }
         }
 
@@ -383,8 +517,8 @@ class MouseMaze {
         document.getElementById('gameOver').classList.add('hidden');
         document.getElementById('instructions').classList.remove('hidden');
 
-        // Reset sphere position and velocity
-        this.sphereBody.position.set(0, 50, 0);
+        // Reset sphere position to top level
+        this.sphereBody.position.set(0, 150, 0);
         this.sphereBody.velocity.set(0, 0, 0);
         this.sphereBody.angularVelocity.set(0, 0, 0);
 
@@ -402,7 +536,11 @@ class MouseMaze {
         // Remove old holes from scene
         const holeMeshes = [];
         this.mazeGroup.children.forEach(child => {
-            if (child.geometry && (child.geometry.type === 'CylinderGeometry' || child.geometry.type === 'RingGeometry')) {
+            if (child.geometry && (
+                child.geometry.type === 'CylinderGeometry' ||
+                child.geometry.type === 'TorusGeometry' ||
+                (child.geometry.type === 'BoxGeometry' && child.material.transparent && child.material.opacity === 0.6)
+            )) {
                 holeMeshes.push(child);
             }
         });
@@ -431,6 +569,16 @@ class MouseMaze {
 
             // Check for hole collisions
             this.checkHoleCollision();
+
+            // Dynamic camera following ball with smooth interpolation
+            const targetCameraX = this.sphere.position.x * 0.3 + 300;
+            const targetCameraY = this.sphere.position.y * 0.5 + 350;
+            const targetCameraZ = this.sphere.position.z * 0.3 + 300;
+
+            this.camera.position.x += (targetCameraX - this.camera.position.x) * 0.02;
+            this.camera.position.y += (targetCameraY - this.camera.position.y) * 0.02;
+            this.camera.position.z += (targetCameraZ - this.camera.position.z) * 0.02;
+            this.camera.lookAt(this.sphere.position);
         }
 
         // Render scene
