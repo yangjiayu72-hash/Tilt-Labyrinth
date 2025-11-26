@@ -440,5 +440,35 @@ class MouseMaze {
 
 // Initialize the game when the page loads
 window.addEventListener('DOMContentLoaded', () => {
-    const game = new MouseMaze();
+    // Check if required libraries are loaded
+    if (typeof THREE === 'undefined') {
+        console.error('THREE.js failed to load');
+        alert('Error: THREE.js library failed to load. Please refresh the page.');
+        return;
+    }
+
+    if (typeof CANNON === 'undefined') {
+        console.error('CANNON.js failed to load');
+        alert('Error: CANNON.js library failed to load. Please refresh the page.');
+        return;
+    }
+
+    console.log('Libraries loaded successfully. Starting game...');
+
+    try {
+        const game = new MouseMaze();
+        console.log('Game initialized successfully!');
+
+        // Hide loading screen
+        const loadingScreen = document.getElementById('loading');
+        if (loadingScreen) {
+            loadingScreen.style.display = 'none';
+        }
+    } catch (error) {
+        console.error('Error initializing game:', error);
+        const loadingScreen = document.getElementById('loading');
+        if (loadingScreen) {
+            loadingScreen.innerHTML = '<h1>ERROR</h1><p>' + error.message + '</p><p class="small">Check console for details</p>';
+        }
+    }
 });
